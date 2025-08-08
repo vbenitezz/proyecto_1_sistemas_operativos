@@ -14,6 +14,7 @@ typedef struct {
     //"Listo", "Ejecutando", "Terminado"
     char estado[10];
     vector<string> instrucciones;
+    int ejecuciones;
 } Proceso;
 
 #endif

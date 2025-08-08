@@ -4,10 +4,52 @@
 #include <sstream> //usar streams de texto en memoria como si fueran archivos
 #include <vector> //arreglo dinámico
 #include <string>
+//random
+#include <cstdlib>
+#include <ctime>
+//ms
+#include <thread>
+#include <chrono>
+
+#include <termios.h>
+#include <unistd.h>
+#include <fcntl.h>
 
 #include "../include/Proceso.h"
+#include "../include/DualStreambuf.h"
 
 using namespace std; //usar elementos del espacio de nombres std sin escribir std::
+
+#include <iostream>
+#include <termios.h>
+#include <unistd.h>
+#include <fcntl.h>
+
+termios termOriginal;
+
+void configurarTerminal() {
+    tcgetattr(STDIN_FILENO, &termOriginal);
+
+    termios term = termOriginal;
+    term.c_lflag &= ~(ICANON | ECHO);
+    tcsetattr(STDIN_FILENO, TCSANOW, &term);
+}
+
+void restaurarTerminal() {
+    tcsetattr(STDIN_FILENO, TCSANOW, &termOriginal);
+}
+
+bool teclaPresionada() {
+    int oldf = fcntl(STDIN_FILENO, F_GETFL);
+    fcntl(STDIN_FILENO, F_SETFL, oldf | O_NONBLOCK);
+
+    char c;
+    int n = read(STDIN_FILENO, &c, 1);
+
+    fcntl(STDIN_FILENO, F_SETFL, oldf);
+
+    return (n > 0);
+}
 
 Proceso leerProceso(const string& proceso) {
     Proceso proc;
@@ -17,13 +59,14 @@ Proceso leerProceso(const string& proceso) {
     proc.bx = 0;
     proc.cx = 0;
     proc.quantum = 1;
+    proc.ejecuciones = 0;
 
     strcpy(proc.estado, "Listo");
 
     string bloque;
-    stringstream ss_proc(proceso);
+    stringstream ssProc(proceso);
 
-    while (getline(ss_proc, bloque, ',')) {
+    while (getline(ssProc, bloque, ',')) {
         if (bloque.find("PID:") != string::npos) {
             proc.pid = stoi(bloque.substr(4));
         } else if (bloque.find("AX=") != string::npos) {
@@ -53,38 +96,33 @@ void leerInstrucciones(Proceso &proceso) {
     archivo.close();
 }
 
-void ejecutarIns(Proceso& proceso) {
-    if(proceso.pc >= proceso.instrucciones.size()) {
-        strcpy(proceso.estado, "Terminado");
+void ejecutarIns(Proceso* proceso) {
+    if(proceso->pc >= proceso->instrucciones.size()) {
+        strcpy(proceso->estado, "Terminado");
         return;
     }
 
-    string ins = proceso.instrucciones[proceso.pc];
+    string ins = proceso->instrucciones[proceso->pc];
     stringstream ss(ins);
     string oper, arg1, arg2;
     ss >> oper >> arg1 >> arg2;
 
-    // cout << ss << endl;
-    // cout << oper << endl;
-    // cout << arg1 << endl;
-    // cout << arg2 << endl;
-
     if(oper == "NOP") {
-        proceso.pc++;
+        proceso->pc++;
     } else if(oper == "INC") {
-        if(arg1 == "AX") proceso.ax++;
-        else if(arg1 == "BX") proceso.bx++;
-        else if(arg1 == "CX") proceso.cx++;
+        if(arg1 == "AX") proceso->ax++;
+        else if(arg1 == "BX") proceso->bx++;
+        else if(arg1 == "CX") proceso->cx++;
         else cout << "Error en INC" << endl;
-        proceso.pc++;
+        proceso->pc++;
     } else if(oper == "JMP") {
         int salto = stoi(arg1);
-        if(salto >= 0 && salto < proceso.instrucciones.size()) {
-            proceso.pc = salto;
+        if(salto >= 0 && salto < proceso->instrucciones.size()) {
+            proceso->pc = salto;
         } else {
             cout << "Error en JMP" << endl;
-            proceso.pc = proceso.instrucciones.size() - 1;
-            strcpy(proceso.estado, "Terminado");
+            proceso->pc = proceso->instrucciones.size();
+            strcpy(proceso->estado, "Terminado");
         }
     } else if(oper == "ADD" || oper == "SUB" || oper == "MUL") {
         if(!arg1.empty() && arg1.back() == ',') {
@@ -93,121 +131,132 @@ void ejecutarIns(Proceso& proceso) {
         int* ar1 = nullptr;
         int ar2;
 
-        if(arg1 == "AX") ar1 = &proceso.ax;
-        else if(arg1 == "BX") ar1 = &proceso.bx;
-        else if(arg1 == "CX") ar1 = &proceso.cx;
+        if(arg1 == "AX") ar1 = &proceso->ax;
+        else if(arg1 == "BX") ar1 = &proceso->bx;
+        else if(arg1 == "CX") ar1 = &proceso->cx;
 
-        if(arg2 == "AX") ar2 = proceso.ax;
-        else if(arg2 == "BX") ar2 = proceso.bx;
-        else if(arg2 == "CX") ar2 = proceso.cx;
+        if(arg2 == "AX") ar2 = proceso->ax;
+        else if(arg2 == "BX") ar2 = proceso->bx;
+        else if(arg2 == "CX") ar2 = proceso->cx;
         else ar2 = stoi(arg2);
 
         if(oper == "ADD") *ar1 += ar2;
         else if(oper == "SUB") *ar1 -= ar2;
         else if(oper == "MUL") *ar1 *= ar2;
 
-        proceso.pc++;
+        proceso->pc++;
+    } else {
+        cout << "else" << endl;
+        proceso->pc++;
     }
 }
 
-// void simularRoundRobin(vector<Proceso> &procesos) {
-//     int numProcesos = procesos.size();
-//     int actual = 0;
-//     bool todosTerminados = false;
+void simularRoundRobin(vector<Proceso> &procesos) {
+    int numProcesos = procesos.size();
+    int actual = 0;
+    bool todosTerminados = false;
+    int interrup;
+    int nuevoActual;
+    vector<Proceso*> procesosInterrup;
+    bool nuevaInterrup = false;
     
-//     while(!todosTerminados) {
-//         todosTerminados = true;
-//         Proceso &procesoActual = procesos[actual];
+    while(!todosTerminados) {
+        todosTerminados = true;
+        Proceso* procesoActual;
+        if(nuevaInterrup) {
+            nuevaInterrup = false;
+            actual = (actual + 2) % numProcesos;
+            procesoActual = &procesos[actual];
+        } else {
+            if(procesosInterrup.empty()) {
+                procesoActual = &procesos[actual];
+            } else {
+                procesoActual = procesosInterrup[0];
+                procesosInterrup.erase(procesosInterrup.begin());
+            }
 
-//         if(strcmp(procesoActual.estado, "Terminado") != 0) {
-//             todosTerminados = false;
+        }
+        
+        if(strcmp(procesoActual->estado, "Terminado") != 0) {
+            todosTerminados = false;
 
-//             cout << "[Cambio de contexto]" << endl;
-//             cout << "Cargando estado de Proceso " << procesoActual.pid
-//                  << ": PC=" << procesoActual.pc
-//                  << ", AX=" << procesoActual.ax
-//                  << ", BX=" << procesoActual.bx 
-//                  << ", CX=" << procesoActual.cx << endl;
+            cout << "[Cambio de contexto]" << endl;
+            cout << "Cargando estado de Proceso " << procesoActual->pid
+                 << ": PC = " << procesoActual->pc
+                 << ", AX = " << procesoActual->ax
+                 << ", BX = " << procesoActual->bx 
+                 << ", CX = " << procesoActual->cx
+                 << ", Estado: " << "Ejecutando" << endl;
+            this_thread::sleep_for(chrono::milliseconds(1500));
             
-//             for(int i = 0; i < procesoActual.quantum; i++) {
-//                 ejecutarIns(procesoActual);
-//                 if(strcmp(procesoActual.estado, "Terminado") == 0) break;
-//             }
+            interrup = 1;
+            for(int i = 0; i < procesoActual->quantum; i++) {
+                if (teclaPresionada()) {
+                    interrup = 0;
+                    break;
+                }
+                procesoActual->ejecuciones++;
+                ejecutarIns(procesoActual);
+                if(strcmp(procesoActual->estado, "Terminado") == 0) break;
+                if(procesoActual->pc >= procesoActual->instrucciones.size()) {
+                    strcpy(procesoActual->estado, "Terminado");
+                    break;
+                }
+                if(procesoActual->ejecuciones >= 100) {
+                    cout << "CICLO INFINITO" << endl;
+                    strcpy(procesoActual->estado, "Terminado");
+                    break;
+                }
+            }
 
-//             cout << "Guardando estado de Proceso " << procesoActual.pid
-//                  << ": PC=" << procesoActual.pc
-//                  << ", AX=" << procesoActual.ax
-//                  << ", BX=" << procesoActual.bx 
-//                  << ", CX=" << procesoActual.cx << endl;
-//             cout << endl;
+            cout << "Guardando estado de Proceso " << procesoActual->pid
+                 << ": PC = " << procesoActual->pc
+                 << ", AX = " << procesoActual->ax
+                 << ", BX = " << procesoActual->bx 
+                 << ", CX = " << procesoActual->cx;
 
-//             actual = (actual + 1) % numProcesos;
-//         } else {
-//             for(int i = 0; i < numProcesos; i++) {
-//                 if(strcmp(procesos[i].estado, "Terminado") != 0) {
-//                     todosTerminados = false;
-//                     actual = i;
-//                     break;
-//                 }
-//             }
-//         }
-//     }
-// }
+            if(strcmp(procesoActual->estado, "Terminado") == 0) {
+                cout << ", Estado: " << "Terminado" << endl;
+            } else if(interrup == 0) {
+                cout << ", Estado: " << "Interrumpido" << endl;
+            } else {
+                cout << ", Estado: " << "Listo" << endl;
+            }
 
-// void simularRoundRobin(vector<Proceso> &procesos) {
-//     int numProcesos = procesos.size();
-//     int procesosTerminados = 0;
-//     int indiceActual = 0;
-//     int ultimoProceso = -1; // para detectar el cambio de contexto
-
-//     while (procesosTerminados < numProcesos) {
-//         Proceso &p = procesos[indiceActual];
-
-//         if (strcmp(p.estado, "Terminado") == 0) {
-//             indiceActual = (indiceActual + 1) % numProcesos;
-//             continue;
-//         }
-
-//         // Cambio de contexto
-//         if (ultimoProceso != -1 && ultimoProceso != p.pid) {
-//             Proceso &anterior = procesos[ultimoProceso - 1];
-//             cout << "[Cambio de contexto]" << endl;
-//             cout << "Guardando estado de Proceso " << anterior.pid
-//                  << ": PC=" << anterior.pc
-//                  << ", AX=" << anterior.ax
-//                  << ", BX=" << anterior.bx 
-//                  << ", CX=" << anterior.cx << endl;
-//             cout << "Cargando estado de Proceso " << p.pid
-//                  << ": PC=" << p.pc
-//                  << ", AX=" << p.ax
-//                  << ", BX=" << anterior.bx 
-//                  << ", CX=" << anterior.cx << endl;
-//         }
-
-//         strcpy(p.estado, "Ejecutando");
-
-//         // Ejecutar hasta 'quantum' instrucciones
-//         int instruccionesEjecutadas = 0;
-//         while (instruccionesEjecutadas < p.quantum && strcmp(p.estado, "Terminado") != 0) {
-//             ejecutarIns(p);
-//             instruccionesEjecutadas++;
-//         }
-
-//         if (strcmp(p.estado, "Terminado") == 0) {
-//             procesosTerminados++;
-//         } else {
-//             strcpy(p.estado, "Listo");
-//         }
-
-//         ultimoProceso = p.pid;
-//         indiceActual = (indiceActual + 1) % numProcesos;
-//     }
-
-//     cout << "Todos los procesos han terminado." << endl;
-// }
-
+            if(interrup != 0) {
+                actual = (actual + 1) % numProcesos;
+            } else {
+                procesosInterrup.push_back(procesoActual);
+                // nuevoActual = rand() % numProcesos;
+                // if(nuevoActual != actual) {
+                //     actual = nuevoActual;
+                // } else {
+                //     while(nuevoActual == actual) {
+                //         nuevoActual = rand() % numProcesos;
+                //     }
+                //     actual = nuevoActual;
+                // }
+                nuevaInterrup = true;
+            }
+            
+        } else {
+            for(int i = 0; i < numProcesos; i++) {
+                if(strcmp(procesos[i].estado, "Terminado") != 0) {
+                    todosTerminados = false;
+                    actual = i;
+                    break;
+                }
+            }
+        }
+    }
+}
 
 int main() {
+    ofstream logfile("registro.txt");
+
+    dual_streambuf dsbuf(cout.rdbuf(), logfile.rdbuf());
+    cout.rdbuf(&dsbuf);
+
     ifstream archivo("procesos.txt");
     vector<Proceso> procesos;
 
@@ -232,7 +281,11 @@ int main() {
         cout << "---------------------" << endl;
     }
 
+    srand(time(0));
+    configurarTerminal();
     simularRoundRobin(procesos);
 
+    restaurarTerminal();
+    cout << "Programa terminado.\n";
     return 0;
 }
