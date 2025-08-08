@@ -1,0 +1,5 @@
+MUL CX, AX
+SUB BX, 2
+INC AX
+NOP
+JMP 3
