@@ -1,5 +1,8 @@
-# proyecto_1_sistemas_operativos
+# Proyecto 1 Sistemas Operativos
 
-**Compilar →** g++ -o bin/compilar src/main.cpp -Iinclude    
+# Compilar
+g++ -o bin/compilar src/main.cpp -Iinclude
 
-**Ejecutar →** ./bin/compilar
+# Ejecutar
+./bin/compilar
+
