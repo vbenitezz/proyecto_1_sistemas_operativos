@@ -63,6 +63,8 @@ Más que conclusiones, estas son observaciones y mejoras a tener en cuenta en ca
 * Los estados de los procesos realmente solo toman los valores Listo y Terminado; los estados Ejecutando e Interrumpido únicamente se muestran por consola mediante cout.
 * Las interrupciones no siempre funcionan correctamente. Al producirse una interrupción, se ejecuta el proceso que está dos posiciones más adelante y luego se reanuda el proceso que se estaba ejecutando antes de la interrupción, llegando incluso a ejecutarse dos veces.
 * Incorporar un archivo Makefile para la compilación del proyecto.
+* Mejorar la estructura del proyecto, dividiendo el código en más archivos según sus funcionalidades, haciendo un uso más eficiente de las clases y reorganizando la estructura general en torno a una única clase principal.
+
 
 
 
