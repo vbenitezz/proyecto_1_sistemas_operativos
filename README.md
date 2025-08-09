@@ -57,6 +57,13 @@ MUL CX, 8
 INC AX    
 JMP 0    
 
+## Conclusiones 
+Más que conclusiones, estas son observaciones y mejoras a tener en cuenta en caso de desarrollar una nueva versión del mismo proyecto base:
+* Implementar una cola en el planificador round-robin. Actualmente, me guío por el estado del proceso para decidir cuál debe ejecutarse.
+* Los estados de los procesos realmente solo toman los valores Listo y Terminado; los estados Ejecutando e Interrumpido únicamente se muestran por consola mediante cout.
+* Las interrupciones no siempre funcionan correctamente. Al producirse una interrupción, se ejecuta el proceso que está dos posiciones más adelante y luego se reanuda el proceso que se estaba ejecutando antes de la interrupción, llegando incluso a ejecutarse dos veces.
+* Incorporar un archivo Makefile para la compilación del proyecto.
+
 
 
 
